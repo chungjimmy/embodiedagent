@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+experiment_results*/
+three_task_*_results/
+smoke_test_results/
+captures/
+manual_review_images/
+results_*.zip
+replay_results.csv

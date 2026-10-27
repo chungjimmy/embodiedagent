@@ -1,0 +1,404 @@
+{
+  "study_design": {
+    "require_single_model": true,
+    "exclude_coela_baseline": false,
+    "require_explicit_scene_instances": true
+  },
+  "models": [
+    {
+      "name": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "use_4bit": true,
+      "max_new_tokens": 200,
+      "min_pixels": 200704,
+      "max_pixels": 1003520,
+      "clear_cuda_cache_between_calls": true,
+      "generation_max_time_seconds": 120,
+      "four_bit_compute_dtype": "auto",
+      "log_cuda_memory": true,
+      "cuda_allocator_config": "expandable_segments:True"
+    }
+  ],
+  "perceptual_interfaces": [
+    "text_mediated"
+  ],
+  "memory_modes": [
+    "combined"
+  ],
+  "run_primary_conditions": false,
+  "scene": {
+    "name": "archviz_house",
+    "avatar_id": "a",
+    "width": 1280,
+    "height": 720,
+    "turn_angle_degrees": 45,
+    "initial_position": {
+      "x": -7.737768173217773,
+      "y": 1.6,
+      "z": -2.491929054260254
+    },
+    "initial_yaw": 0,
+    "navigation": {
+      "enabled": true,
+      "cell_size": 0.25,
+      "raycast_y": 1.6,
+      "clearance": 0.35,
+      "path_sample_spacing": 0.2
+    },
+    "camera": {
+      "initial_pitch_degrees": 10,
+      "pitch_step_degrees": 15,
+      "minimum_pitch_degrees": 10,
+      "maximum_pitch_degrees": 10,
+      "blank_frame_retry_count": 2,
+      "reject_blank_frames": true
+    },
+    "target_visibility_preflight": {
+      "enabled": true,
+      "minimum_distance": 1.5,
+      "maximum_distance": 4.0,
+      "preferred_distance": 2.5,
+      "minimum_visible_pixels": 512,
+      "minimum_bbox_width_pixels": 48,
+      "minimum_bbox_height_pixels": 48,
+      "edge_margin_pixels": 20,
+      "minimum_vertical_center_fraction": 0.15,
+      "maximum_vertical_center_fraction": 0.85,
+      "max_candidate_poses": 64
+    },
+    "task_objects": [
+      {
+        "object_id": 1001,
+        "label": "pink box",
+        "visual_description": "plain pink cube-shaped box",
+        "model_name": "cube",
+        "library": "models_flex.json",
+        "scale_factor": 0.5,
+        "color": {
+          "r": 1.0,
+          "g": 0.41,
+          "b": 0.71,
+          "a": 1.0
+        },
+        "radius": 0.45,
+        "pickupable": false,
+        "static": true,
+        "placement": {
+          "strategy": "nearest_reachable",
+          "minimum_path_distance": 6.0,
+          "minimum_departure": 1.0,
+          "clearance": 0.9,
+          "minimum_view_poses": 4,
+          "view_minimum_distance": 1.5,
+          "view_maximum_distance": 4.0,
+          "view_preferred_distance": 2.5,
+          "y": 0.0,
+          "ground_to_floor": true,
+          "surface_y": 0.0,
+          "ground_clearance": 0.02
+        }
+      },
+      {
+        "object_id": 1002,
+        "label": "yellow box",
+        "visual_description": "plain yellow cube-shaped box",
+        "model_name": "cube",
+        "library": "models_flex.json",
+        "scale_factor": 0.5,
+        "color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 0.0,
+          "a": 1.0
+        },
+        "radius": 0.45,
+        "pickupable": false,
+        "static": true,
+        "placement": {
+          "strategy": "nearest_reachable",
+          "reference_object_id": 1001,
+          "minimum_path_distance": 6.0,
+          "minimum_initial_path_distance": 6.0,
+          "minimum_separation": 5.0,
+          "minimum_departure": 1.0,
+          "clearance": 0.9,
+          "minimum_view_poses": 4,
+          "view_minimum_distance": 1.5,
+          "view_maximum_distance": 4.0,
+          "view_preferred_distance": 2.5,
+          "y": 0.0,
+          "ground_to_floor": true,
+          "surface_y": 0.0,
+          "ground_clearance": 0.02
+        }
+      }
+    ],
+    "development_episodes": [
+      {
+        "id": "dev_heading_000",
+        "seed": 11,
+        "initial_yaw": 0
+      }
+    ],
+    "evaluation_episodes": [
+      {
+        "id": "eval_heading_000",
+        "seed": 101,
+        "initial_yaw": 0
+      }
+    ]
+  },
+  "max_steps": 50,
+  "perception_max_new_tokens": 280,
+  "perception_retry_max_new_tokens": 160,
+  "decision_max_new_tokens": 160,
+  "completion_max_new_tokens": 64,
+  "save_step_images": true,
+  "tasks": [
+    {
+      "id": "locate_pink_box",
+      "goal": "Find the pink box. Stop only when the pink box is directly visible and you are near it.",
+      "max_steps": 50,
+      "task_spec": {
+        "task_target": "box",
+        "target_aliases": [
+          "cube",
+          "block"
+        ],
+        "target_attributes": [
+          "pink"
+        ],
+        "excluded_target_terms": [
+          "yellow",
+          "red"
+        ],
+        "completion_mode": "target_near",
+        "completion_condition": "The pink box is directly visible in the current camera view and is near the agent.",
+        "requires_target_confirmation": true,
+        "collision_aware_action_filter": true,
+        "visible_target_approach": true,
+        "target_reacquisition_after_turn": true,
+        "sighting_handling": true,
+        "completion_policy": "assisted",
+        "claim_on_evidence_text": true,
+        "memory_guided_search_hold_actions": 2,
+        "memory_guided_destination": "landmark_first",
+        "target_approach_persistence_steps": 1,
+        "completion_consistency": {
+          "retry_on_inconsistency": true,
+          "promote_validated_perception": false,
+          "require_environment_success_for_completion": true
+        },
+        "allowed_actions": [
+          "move_forward",
+          "move_backward",
+          "turn_left",
+          "turn_right"
+        ]
+      },
+      "success_criteria": {
+        "type": "all",
+        "criteria": [
+          {
+            "type": "object_proximity",
+            "target_object_id": 1001,
+            "max_distance": 2.0
+          },
+          {
+            "type": "object_visibility",
+            "target_object_id": 1001,
+            "minimum_visible_pixels": 128
+          }
+        ]
+      }
+    },
+    {
+      "id": "locate_yellow_box",
+      "goal": "Find the yellow box. Stop only when the yellow box is directly visible and you are near it.",
+      "max_steps": 50,
+      "task_spec": {
+        "task_target": "box",
+        "target_aliases": [
+          "cube",
+          "block"
+        ],
+        "target_attributes": [
+          "yellow"
+        ],
+        "excluded_target_terms": [
+          "pink",
+          "magenta"
+        ],
+        "completion_mode": "target_near",
+        "completion_condition": "The yellow box is directly visible in the current camera view and is near the agent.",
+        "requires_target_confirmation": true,
+        "collision_aware_action_filter": true,
+        "visible_target_approach": true,
+        "target_reacquisition_after_turn": true,
+        "sighting_handling": true,
+        "completion_policy": "assisted",
+        "claim_on_evidence_text": true,
+        "memory_guided_search_hold_actions": 2,
+        "memory_guided_destination": "landmark_first",
+        "target_approach_persistence_steps": 1,
+        "completion_consistency": {
+          "retry_on_inconsistency": true,
+          "promote_validated_perception": false,
+          "require_environment_success_for_completion": true
+        },
+        "allowed_actions": [
+          "move_forward",
+          "move_backward",
+          "turn_left",
+          "turn_right"
+        ]
+      },
+      "success_criteria": {
+        "type": "all",
+        "criteria": [
+          {
+            "type": "object_proximity",
+            "target_object_id": 1002,
+            "max_distance": 2.0
+          },
+          {
+            "type": "object_visibility",
+            "target_object_id": 1002,
+            "minimum_visible_pixels": 128
+          }
+        ]
+      }
+    },
+    {
+      "id": "return_to_pink_box",
+      "goal": "Return to the pink box you found earlier. Stop only when the pink box is directly visible and you are near it.",
+      "max_steps": 50,
+      "task_spec": {
+        "task_target": "box",
+        "target_aliases": [
+          "cube",
+          "block"
+        ],
+        "target_attributes": [
+          "pink"
+        ],
+        "excluded_target_terms": [
+          "yellow",
+          "red"
+        ],
+        "completion_mode": "target_near",
+        "completion_condition": "The pink box is directly visible in the current camera view and is near the agent.",
+        "requires_target_confirmation": true,
+        "collision_aware_action_filter": true,
+        "visible_target_approach": true,
+        "target_reacquisition_after_turn": true,
+        "sighting_handling": true,
+        "completion_policy": "assisted",
+        "claim_on_evidence_text": true,
+        "memory_guided_search_hold_actions": 2,
+        "memory_guided_destination": "landmark_first",
+        "target_approach_persistence_steps": 1,
+        "completion_consistency": {
+          "retry_on_inconsistency": true,
+          "promote_validated_perception": false,
+          "require_environment_success_for_completion": true
+        },
+        "allowed_actions": [
+          "move_forward",
+          "move_backward",
+          "turn_left",
+          "turn_right"
+        ]
+      },
+      "sequential_preconditions": {
+        "requires_successful_task_ids": [
+          "locate_pink_box"
+        ],
+        "requires_landmark_task_id": "locate_pink_box"
+      },
+      "success_criteria": {
+        "type": "all",
+        "criteria": [
+          {
+            "type": "object_proximity",
+            "target_object_id": 1001,
+            "max_distance": 2.0
+          },
+          {
+            "type": "object_visibility",
+            "target_object_id": 1001,
+            "minimum_visible_pixels": 128
+          }
+        ]
+      }
+    }
+  ],
+  "task_ids": [
+    "locate_pink_box",
+    "locate_yellow_box",
+    "return_to_pink_box"
+  ],
+  "interactive": {
+    "perceptual_interface": "text_mediated",
+    "memory_mode": "combined"
+  },
+  "run_split": "evaluation",
+  "episodic_window": 8,
+  "memory_context": {
+    "episodic_events": 3,
+    "semantic_objects": 6,
+    "visited_poses": 4,
+    "semantic_facts": 6,
+    "text_characters": 240,
+    "prompt_characters": 1800
+  },
+  "randomize_condition_order": false,
+  "relaunch_delay_seconds": 1,
+  "episode_timeout_seconds": 1800,
+  "watchdog_termination_grace_seconds": 15,
+  "output_directory": "three_task_box_memory_results",
+  "coela_baseline": {
+    "enabled": false,
+    "description": "Single-agent CoELA-style modular baseline; multi-agent communication is outside this study."
+  },
+  "extensions": {
+    "sequential_tasks": {
+      "enabled": true,
+      "conditions": [
+        {
+          "perceptual_interface": "text_mediated",
+          "memory_mode": "none"
+        },
+        {
+          "perceptual_interface": "text_mediated",
+          "memory_mode": "episodic"
+        },
+        {
+          "perceptual_interface": "text_mediated",
+          "memory_mode": "semantic"
+        },
+        {
+          "perceptual_interface": "text_mediated",
+          "memory_mode": "combined"
+        },
+        {
+          "perceptual_interface": "coela",
+          "memory_mode": "combined"
+        }
+      ],
+      "memory_mode": "combined",
+      "max_steps": 50,
+      "seed": 101,
+      "hard_timeout_seconds": 5400
+    },
+    "object_interaction": {
+      "enabled": false
+    },
+    "learned_memory": {
+      "enabled": false,
+      "frozen": true,
+      "directory": "learned_memory",
+      "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+      "development_seeds_only": true
+    }
+  }
+}

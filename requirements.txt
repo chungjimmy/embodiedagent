@@ -1,0 +1,9 @@
+tdw
+torch
+transformers
+accelerate
+bitsandbytes
+numpy
+pillow
+python-dotenv
+matplotlib
