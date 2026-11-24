@@ -982,7 +982,7 @@ def run_interactive(config_path, build_path):
         close_tdw_build_processes(build_path)
 
 
-DEFAULT_CONFIGS = ("experiment_config.json", "three_task_config.json")
+DEFAULT_CONFIGS = ("experiment_config_final.json", "three_task_config_final.json")
 
 
 def parse_arguments():

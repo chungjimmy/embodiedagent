@@ -10,3 +10,6 @@ captures/
 manual_review_images/
 results_*.zip
 replay_results.csv
+final_check_results/
+!results/
+!results/**

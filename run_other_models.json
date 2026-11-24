@@ -1,0 +1,6 @@
+{
+  "run_configs": [
+    "experiment_config_smolvlm.json",
+    "experiment_config_llama.json"
+  ]
+}

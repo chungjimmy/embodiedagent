@@ -94,6 +94,18 @@ distance and does not by itself mean the task is complete."""
         TARGET_VISIBILITY_RULES_BASE + "\n" + TARGET_PARTIAL_VISIBILITY_RULE
     )
     DEFAULT_COMPLETION_POLICY = "model_distance"
+    CONTROLLER_PRIORITIES = ("default", "target_first")
+    DEFAULT_CONTROLLER_PRIORITY = "default"
+    SIMPLE_VISIBILITY_RULES = """Visibility rules:
+The target is visible when you can see its class (or an alias) and every
+required attribute, such as its color, even if it is far away or cut off at
+the image edge. Report the color you actually see. An object with an
+excluded_target_terms color is not the target. Never mark the target visible
+just because the goal names it.
+target_location is where the target is across the image: left, center, or
+right. target_distance is near when the target fills a large part of the
+image (about an eighth or more), medium when clearly visible but modest, and
+far when small."""
     DEFAULT_TARGET_LOSS_RECOVERY = {
         "enabled": False,
         "max_actions_since_sighting": 2,
@@ -186,6 +198,12 @@ distance and does not by itself mean the task is complete."""
         self._destination_progress = {}
         self._suspended_destinations = {}
         self._claim_on_evidence_text = False
+        self._simplified_rules = False
+        self._controller_priority = self.DEFAULT_CONTROLLER_PRIORITY
+        self._detour_side = None
+        self._detour_plan = None
+        self._initial_scan = False
+        self._target_seen_this_task = False
         self._active_turn_angle_degrees = float(self.TURN_ANGLE_DEGREES)
 
     def run_task(
@@ -242,6 +260,24 @@ distance and does not by itself mean the task is complete."""
         self._suspended_destinations = {}
         self._claim_on_evidence_text = self._claim_on_evidence_text_setting(
             task_spec, self._completion_policy
+        )
+        self._simplified_rules = self._simplified_rules_setting(task_spec)
+        self._controller_priority = self._controller_priority_setting(task_spec)
+        self._detour_side = None
+        self._detour_plan = None
+        self._initial_scan = False
+        self._target_seen_this_task = False
+        if self._target_first:
+            visible_target_approach = True
+            target_loss_recovery = dict(target_loss_recovery, enabled=True)
+            target_reacquisition_after_turn = False
+        self._initial_scan = bool(
+            isinstance(task_spec, dict)
+            and task_spec.get("initial_scan", False) is True
+        )
+        close_range_recheck = self._target_first and bool(
+            isinstance(task_spec, dict)
+            and task_spec.get("close_range_recheck", False) is True
         )
         evidence_conflict_calls_used = 0
         self._target_approach_state = None
@@ -361,7 +397,12 @@ distance and does not by itself mean the task is complete."""
                 reacquisition_call = None
                 reacquisition_attempted = False
                 reacquisition_confirmed = False
-                if (
+                close_range_check = close_range_recheck and (
+                    self._should_recheck_close_target(
+                        perception=perception, goal=goal, history=history
+                    )
+                )
+                if close_range_check or (
                     target_reacquisition_after_turn
                     and self._should_reacquire_target(
                         perception=perception,
@@ -376,6 +417,7 @@ distance and does not by itself mean the task is complete."""
                             goal=goal,
                             step=decision_step,
                             task_contract=task_contract,
+                            close_range=close_range_check,
                         )
                     )
                     self._target_approach_state[
@@ -443,6 +485,32 @@ distance and does not by itself mean the task is complete."""
                 )
 
                 if (
+                    self._simplified_rules
+                    and decision["status"] == "impossible"
+                ):
+                    decision["original_status"] = "impossible"
+                    decision["status"] = "continue"
+                    available, _ = self._guarded_actions(
+                        history,
+                        blocked_action,
+                        allowed_actions=self._current_action_options(),
+                        turn_angle_degrees=self._active_turn_angle_degrees,
+                    )
+                    requested_action, _ = self._normalize_action(
+                        decision.get("requested_action")
+                    )
+                    decision["action"] = (
+                        requested_action
+                        if requested_action in available
+                        else self._choose_exploration_action(
+                            history,
+                            blocked_action,
+                            allowed_actions=self._current_action_options(),
+                            turn_angle_degrees=self._active_turn_angle_degrees,
+                        )
+                    )
+                    decision["impossible_ignored"] = True
+                elif (
                     decision["status"] == "impossible"
                     and not self._impossible_is_justified(
                         decision=decision,
@@ -789,6 +857,15 @@ distance and does not by itself mean the task is complete."""
                     "target_overshoot_corrected": decision.get(
                         "target_overshoot_corrected", False
                     ),
+                    "target_detour_applied": decision.get(
+                        "target_detour_applied", False
+                    ),
+                    "impossible_ignored": decision.get(
+                        "impossible_ignored", False
+                    ),
+                    "initial_scan_applied": decision.get(
+                        "initial_scan_applied", False
+                    ),
                     "search_turn_oscillation_replaced": decision.get(
                         "search_turn_oscillation_replaced", False
                     ),
@@ -907,7 +984,9 @@ distance and does not by itself mean the task is complete."""
             return None, None
 
         task_contract = task_contract or TaskContract.build(goal)
-        prompt = f"""
+        prompt = self._simplified_perception_prompt(
+            goal, task_contract
+        ) if self._simplified_rules else f"""
 You are a visual perception module for an embodied agent.
 Goal: {goal}
 Fixed task contract (do not reinterpret it):
@@ -1058,6 +1137,8 @@ contract or describe irrelevant decor.
             "accept_unlocated"
         )
         parsed["completion_policy"] = self._completion_policy
+        if self._simplified_rules:
+            parsed["simplified_rules"] = True
         if self._normalize_perception(parsed, goal, task_contract=task_contract):
             if parser_result == "valid":
                 parser_result = "perception_normalized"
@@ -1070,7 +1151,36 @@ contract or describe irrelevant decor.
             parsed["coela_semantic_map"] = self._coela_semantic_map(agent, parsed)
         return parsed, perception_calls
 
+    def _simplified_perception_prompt(self, goal, task_contract):
+        return f"""
+You are the eyes of an embodied agent. Look only at the attached CURRENT image.
+Goal: {goal}
+Contract (fixed): {self._json_text(task_contract.as_dict(), compact=True)}
+{self.SIMPLE_VISIBILITY_RULES}
+
+First list what you see, then judge the target. Return exactly one JSON object,
+no Markdown, with the fields in this order:
+{{"scene_summary":"","objects":[{{"name":"","location":"left|center|right","distance":"near|medium|far|unknown","attributes":[]}}],"obstacles":[],"target_visible":false,"target_location":"left|center|right|unknown","target_distance":"near|medium|far|unknown"}}
+
+scene_summary is one sentence of at most 20 words about this image. Put the
+target candidate first in objects, list at most 2 objects, and put its color in
+attributes. Use empty lists, false, or unknown when the image gives no
+evidence.
+""".strip()
+
     def _perception_retry_prompt(self, goal, task_contract):
+        if self._simplified_rules:
+            return f"""
+Look at the attached CURRENT image again.
+Goal: {goal}
+Contract (fixed): {self._json_text(task_contract.as_dict(), compact=True)}
+The previous answer was not complete JSON. Return exactly one compact JSON
+object and no Markdown:
+{{"scene_summary":"max 12 words","objects":[{{"name":"","location":"left|center|right","distance":"near|medium|far|unknown","attributes":[]}}],"target_visible":false,"target_location":"left|center|right|unknown","target_distance":"near|medium|far|unknown"}}
+List at most two objects with their colors. Set target_visible true only when
+you see the target class or an alias with every required attribute. Finish the
+JSON before adding detail.
+""".strip()
         return f"""
 Inspect the attached CURRENT RGB image again.
 Goal: {goal}
@@ -1092,13 +1202,37 @@ without turning; use left or right only when the target is clipped by or very
 close to that edge.
 """.strip()
 
-    def _reacquire_target(self, image, goal, step, task_contract):
+    def _reacquire_target(
+        self, image, goal, step, task_contract, close_range=False
+    ):
         state = (
             self._target_approach_state
             if isinstance(self._target_approach_state, dict)
             else {}
         )
         prompt = f"""
+Look only at the attached CURRENT image.
+Goal: {goal}
+Contract (fixed): {self._json_text(task_contract.as_dict(), compact=True)}
+The agent just walked toward the target. It may now be very close: it can look
+large, or be cut off at the bottom or side edge of the image. Check whether it
+is visible now.
+Return exactly one compact JSON object and no Markdown:
+{{"scene_summary":"max 12 words","objects":[{{"name":"","location":"left|center|right","distance":"near|medium|far|unknown","attributes":[]}}],"target_visible":false,"target_location":"left|center|right|unknown","target_distance":"near|medium|far|unknown"}}
+Include at most one object. Set target_visible true when you see the target
+class or an alias with every required attribute, even if only part of it is in
+the image. Otherwise return false and an empty objects list.
+""".strip() if close_range else f"""
+Look only at the attached CURRENT image.
+Goal: {goal}
+Contract (fixed): {self._json_text(task_contract.as_dict(), compact=True)}
+The agent just turned toward the target. Check again whether it is visible now.
+Return exactly one compact JSON object and no Markdown:
+{{"scene_summary":"max 12 words","objects":[{{"name":"","location":"left|center|right","distance":"near|medium|far|unknown","attributes":[]}}],"target_visible":false,"target_location":"left|center|right|unknown","target_distance":"near|medium|far|unknown"}}
+Include at most one object. Set target_visible true only when you see the
+target class or an alias with every required attribute. Otherwise return false
+and an empty objects list.
+""".strip() if self._simplified_rules else f"""
 Inspect only the attached CURRENT RGB image.
 Goal: {goal}
 Fixed task contract: {self._json_text(task_contract.as_dict(), compact=True)}
@@ -1173,6 +1307,8 @@ clipped by or very close to that edge. Finish the JSON before adding detail.
             "accept_unlocated"
         )
         parsed["completion_policy"] = self._completion_policy
+        if self._simplified_rules:
+            parsed["simplified_rules"] = True
         self._normalize_perception(
             parsed,
             goal,
@@ -1198,7 +1334,110 @@ clipped by or very close to that edge. Finish the JSON before adding detail.
         )
         return parsed, call
 
+    def _simplified_decision_schema(self, task_contract):
+        schema = {}
+        if self.perceptual_interface == "direct_visual":
+            schema["visual_evidence"] = ""
+        if task_contract.completion_mode in {"target_visible", "target_near"}:
+            schema["target_visible"] = False
+            schema["target_location"] = "left|center|right|unknown"
+            if task_contract.completion_mode == "target_near":
+                schema["target_distance"] = "near|medium|far|unknown"
+        elif task_contract.completion_mode == "target_held":
+            schema["target_held"] = False
+        schema["status"] = ""
+        schema["action"] = None
+        schema["reason"] = ""
+        return schema
+
+    def _simplified_decision_prompt(
+        self,
+        goal,
+        task_contract,
+        observation,
+        memory_context,
+        prompt_available,
+        prompt_guard,
+        decision_schema,
+        camera_rule,
+    ):
+        mode = task_contract.completion_mode
+        if mode == "target_near":
+            done_rule = (
+                "2. If the target is visible and near, set status to completed."
+            )
+        elif mode == "target_visible":
+            done_rule = "2. If the target is visible, set status to completed."
+        else:
+            done_rule = (
+                "2. Set status to completed only when the completion_condition "
+                "is met in the current view."
+            )
+        if self.memory_mode in {"semantic", "combined"}:
+            search_rule = (
+                "3. If the target is not visible, search: turn to look around, "
+                "then move_forward to a new area. If memory lists a "
+                "target_sighting or task_landmarks, turn toward it by "
+                "turn_degrees and move_forward until distance_m is small."
+            )
+        else:
+            search_rule = (
+                "3. If the target is not visible, search: turn to look around, "
+                "then move_forward to a new area. Do not repeat the same turns "
+                "in one place."
+            )
+        if self.perceptual_interface == "direct_visual":
+            evidence_rule = (
+                "Look at the attached image first. visual_evidence says what you "
+                "see in at most 16 words and names the target and its color "
+                "when it is visible."
+            )
+            visibility_rules = self.SIMPLE_VISIBILITY_RULES + "\n"
+        elif self.perceptual_interface == "hybrid":
+            evidence_rule = (
+                "The scene summary decides whether the target is visible; copy "
+                "target_visible and target_location from it. The attached image "
+                "is context for choosing the action."
+            )
+            visibility_rules = ""
+        else:
+            evidence_rule = (
+                "The scene summary is the only evidence. Copy target_visible "
+                "and target_location from it; never mark the target visible "
+                "when the summary does not confirm it."
+            )
+            visibility_rules = ""
+        return f"""
+You control one embodied agent for one step.
+Goal: {goal}
+Contract (fixed): {self._json_text(task_contract.as_dict(), compact=True)}
+Current observation:
+{observation}
+Memory: {self._json_text(memory_context, compact=True)}
+Available actions: {", ".join(sorted(prompt_available))}
+Action guard: {prompt_guard or "none"}
+
+{evidence_rule}
+{visibility_rules}Rules:
+1. If the target is visible anywhere in the image, move_forward toward it.
+   One turn moves the view by most of the image, so do not turn toward a
+   visible target. If it just left the view at one side, turn to that side.
+{done_rule}
+{search_rule}
+4. Memory is only a hint. Only the current view proves the target is visible.
+5. Use only an available action. The target can always be found, so keep
+   searching until you see it.{camera_rule}
+Keep reason to at most 12 words.
+
+Return exactly one JSON object, no Markdown, with the fields in this order:
+{self._json_text(decision_schema, compact=True)}
+status is completed or continue. action is null only when status is
+completed.
+""".strip()
+
     def _decision_response_schema(self, task_contract):
+        if self._simplified_rules:
+            return self._simplified_decision_schema(task_contract)
         schema = {
             "status": "",
             "action": None,
@@ -1335,7 +1574,16 @@ clipped by or very close to that edge. Finish the JSON before adding detail.
                 "is a hint, not proof; stop only on current direct visual "
                 "evidence.\n"
             )
-        prompt = f"""
+        prompt = self._simplified_decision_prompt(
+            goal=goal,
+            task_contract=task_contract,
+            observation=observation,
+            memory_context=memory_context,
+            prompt_available=prompt_available,
+            prompt_guard=prompt_guard,
+            decision_schema=decision_schema,
+            camera_rule=camera_rule.replace("\n8. ", "\n6. "),
+        ) if self._simplified_rules else f"""
 You control one embodied TDW agent for one step.
 Goal: {goal}
 Fixed contract (immutable): {self._json_text(task_contract.as_dict(), compact=True)}
@@ -1636,6 +1884,16 @@ continue. Do not add fields from another completion mode.
             if target_confirmed
             else "not confirmed by perception"
         )
+        if self._simplified_rules:
+            observation = (
+                "Scene summary from the current image:\n"
+                f"{scene_text}\n"
+                f"Target status: {target_status}."
+            )
+            if self.perceptual_interface == "hybrid":
+                observation += "\nThe current image is also attached."
+                return observation, image
+            return observation, None
         observation = (
             "Authoritative scene summary generated from the current RGB image:\n"
             f"{scene_text}\n\n"
@@ -1710,6 +1968,13 @@ continue. Do not add fields from another completion mode.
                 parts.append(
                     f"Perception confirms the task target {target} is visible."
                 )
+                if perception.get("simplified_rules") is True:
+                    location = cls._normalize_location(
+                        perception.get("target_location")
+                    )
+                    if location != "unknown":
+                        parts.append(f"Target position: {location}.")
+                    return " ".join(parts)
                 correction = cls._normalize_target_correction(
                     perception.get("target_correction")
                 )
@@ -2320,7 +2585,7 @@ continue. Do not add fields from another completion mode.
             sighting_side = self._candidate_target_location(
                 perception, decision
             )
-            if self._is_side_flip_after_translation(
+            if not self._target_first and self._is_side_flip_after_translation(
                 self._last_target_sighting, sighting_side, executed_actions
             ):
                 perception_confirms_target = False
@@ -2488,6 +2753,16 @@ continue. Do not add fields from another completion mode.
                 perception,
                 decision,
             )
+            if self._target_first:
+                if location in {"left", "right"} and "move_forward" not in available:
+                    correction = location
+                elif location in {"left", "right", "center"} or (
+                    self._is_unlocated_sighting(perception, decision)
+                ):
+                    correction = "none"
+                else:
+                    correction = "unknown"
+                decision["target_correction_source"] = "target_first"
             if correction == "unknown" and location == "center":
                 correction = "none"
             elif location == "center" and correction in {"left", "right"}:
@@ -2528,7 +2803,10 @@ continue. Do not add fields from another completion mode.
                     and self._last_successful_action(history) == previous_turn
                 ):
                     movement_purpose = "overshoot_correction"
-                    force_forward_next = True
+                    if self._target_first:
+                        desired_action = "move_forward"
+                    else:
+                        force_forward_next = True
             if desired_action in available:
                 replaced = action != desired_action
                 action = desired_action
@@ -2717,6 +2995,26 @@ continue. Do not add fields from another completion mode.
             self._target_approach_state = None
 
         if (
+            self._target_first
+            and perception_confirms_target
+            and action == "move_backward"
+        ):
+            detour = self._target_first_detour_turn(
+                self._candidate_target_location(perception, decision),
+                available,
+            )
+            if detour is not None:
+                action = detour
+                decision["action_purpose"] = "target_detour"
+                decision["target_detour_applied"] = True
+                decision.setdefault("controller_intervention", "target_detour")
+                policy_reason = (
+                    "the target is visible but move_forward is blocked; turning "
+                    f"with {detour} to go around the obstacle instead of "
+                    "backing away"
+                )
+
+        if (
             recovery_enabled
             and visible_target_approach
             and perception_confirms_target
@@ -2812,6 +3110,35 @@ continue. Do not add fields from another completion mode.
                     f"search turn, so the controller selected {replacement}"
                 )
 
+        if perception_confirms_target:
+            self._target_seen_this_task = True
+        if (
+            self._initial_scan
+            and not perception_confirms_target
+            and not self._target_seen_this_task
+            and self._detour_plan is None
+            and not decision.get("memory_guided_action")
+            and action in {"move_forward", "move_backward"}
+            and self._initial_scan_incomplete(history)
+        ):
+            scan_turn = self._initial_scan_turn(history, available)
+            if scan_turn is not None:
+                action = scan_turn
+                decision["action_purpose"] = "initial_scan"
+                decision["initial_scan_applied"] = True
+                decision["controller_intervention"] = "initial_scan"
+                policy_reason = (
+                    "the target has not been seen yet, so the agent finishes "
+                    f"looking around its starting position with {scan_turn}"
+                )
+
+        if self._target_first:
+            action, detour_reason = self._apply_target_first_detour(
+                action, decision, perception_confirms_target, available
+            )
+            if detour_reason:
+                policy_reason = detour_reason
+
         if policy_reason:
             decision["movement_policy"] = policy_reason
             existing_reason = str(decision.get("reason") or "").strip()
@@ -2822,6 +3149,85 @@ continue. Do not add fields from another completion mode.
             )
         decision["action"] = action
         return decision
+
+    @classmethod
+    def _initial_scan_incomplete(cls, history):
+        executed = [
+            item
+            for item in history
+            if isinstance(item, dict) and item.get("executed")
+        ]
+        if any(
+            item.get("action") in {"move_forward", "move_backward"}
+            and item.get("position_changed", True)
+            for item in executed
+        ):
+            return False
+        turns = sum(1 for item in executed if item.get("action") in cls.TURN_ACTIONS)
+        return turns < 6
+
+    @classmethod
+    def _initial_scan_turn(cls, history, available):
+        previous = [
+            item.get("action")
+            for item in history
+            if isinstance(item, dict)
+            and item.get("executed")
+            and item.get("action") in cls.TURN_ACTIONS
+        ]
+        preferred = previous[-1] if previous else "turn_right"
+        other = "turn_left" if preferred == "turn_right" else "turn_right"
+        for turn in (preferred, other):
+            if turn in available:
+                return turn
+        return None
+
+    def _apply_target_first_detour(
+        self, action, decision, perception_confirms_target, available
+    ):
+        if perception_confirms_target:
+            self._detour_plan = None
+            if (
+                "move_forward" not in available
+                and action in self.TURN_ACTIONS
+                and decision.get("action_purpose")
+                in {"target_alignment", "target_detour"}
+            ):
+                self._detour_plan = {
+                    "stage": "forward",
+                    "turn_back": (
+                        "turn_left" if action == "turn_right" else "turn_right"
+                    ),
+                }
+                decision["action_purpose"] = "target_detour"
+                decision["target_detour_applied"] = True
+            return action, None
+        plan = self._detour_plan
+        if not plan:
+            return action, None
+        if plan["stage"] == "forward":
+            if "move_forward" not in available:
+                self._detour_plan = None
+                return action, None
+            plan["stage"] = "turn_back"
+            action = "move_forward"
+            reason = (
+                "going around the obstacle: moving forward past it after "
+                "turning toward the target"
+            )
+        else:
+            self._detour_plan = None
+            if plan["turn_back"] not in available:
+                return action, None
+            action = plan["turn_back"]
+            reason = (
+                f"going around the obstacle: turning back with {action} "
+                "toward where the target was"
+            )
+        decision["action_purpose"] = "target_detour"
+        decision["target_detour_applied"] = True
+        decision["controller_intervention"] = "target_detour"
+        return action, reason
 
     def _memory_guided_action(
         self, memory_context, available, perception_confirms_target,
@@ -3005,6 +3411,43 @@ continue. Do not add fields from another completion mode.
                 + ", ".join(cls.MEMORY_GUIDED_DESTINATIONS)
             )
         return value
+
+    @staticmethod
+    def _simplified_rules_setting(task_spec):
+        if not isinstance(task_spec, dict):
+            return False
+        value = task_spec.get("simplified_rules", False)
+        if not isinstance(value, bool):
+            raise ValueError("task_spec.simplified_rules must be true or false.")
+        return value
+
+    @classmethod
+    def _controller_priority_setting(cls, task_spec):
+        if not isinstance(task_spec, dict):
+            return cls.DEFAULT_CONTROLLER_PRIORITY
+        value = task_spec.get(
+            "controller_priority", cls.DEFAULT_CONTROLLER_PRIORITY
+        )
+        if value not in cls.CONTROLLER_PRIORITIES:
+            raise ValueError(
+                "task_spec.controller_priority must be one of: "
+                + ", ".join(cls.CONTROLLER_PRIORITIES)
+            )
+        return value
+
+    @property
+    def _target_first(self):
+        return self._controller_priority == "target_first"
+
+    def _target_first_detour_turn(self, location, available):
+        if self._detour_side is None:
+            self._detour_side = location if location in {"left", "right"} else "left"
+        preferred = f"turn_{self._detour_side}"
+        other = "turn_right" if preferred == "turn_left" else "turn_left"
+        for turn in (preferred, other):
+            if turn in available:
+                return turn
+        return None
 
     @staticmethod
     def _visible_target_approach_enabled(task_spec):
@@ -3510,6 +3953,25 @@ hidden, doubtful, or excluded candidate is false.
                 "described but not flagged as visible."
             )
         return decision, call
+
+    def _should_recheck_close_target(self, perception, goal, history):
+        if self.perceptual_interface == "direct_visual":
+            return False
+        if self._perception_confirms_target(goal, perception):
+            return False
+        executed = [
+            item
+            for item in history
+            if isinstance(item, dict) and item.get("executed")
+        ]
+        if not executed:
+            return False
+        previous = executed[-1]
+        return bool(
+            previous.get("action") == "move_forward"
+            and previous.get("action_purpose") == "target_approach"
+            and previous.get("success", True)
+        )
 
     def _should_reacquire_target(self, perception, goal, history):
         if self.perceptual_interface == "direct_visual":
@@ -5506,6 +5968,8 @@ target or substitute an excluded look-alike.
                 else None
             ),
             "completion_policy": self._completion_policy,
+            "simplified_rules": self._simplified_rules,
+            "controller_priority": self._controller_priority,
             "rejected_impossible_claims": sum(
                 item.get("controller_intervention") == "impossible_rejected"
                 for item in decisions
@@ -5548,6 +6012,15 @@ target or substitute an excluded look-alike.
             "target_approach_persisted_steps": sum(
                 bool(item.get("target_approach_persisted"))
                 for item in decisions
+            ),
+            "initial_scan_turns": sum(
+                1 for item in history if item.get("initial_scan_applied")
+            ),
+            "impossible_status_ignored": sum(
+                1 for item in history if item.get("impossible_ignored")
+            ),
+            "target_detours": sum(
+                1 for item in history if item.get("target_detour_applied")
             ),
             "target_overshoot_corrections": sum(
                 bool(item.get("target_overshoot_corrected"))

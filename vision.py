@@ -6,6 +6,8 @@ import time
 
 MODEL_ALIASES = {
     "qwen": "Qwen/Qwen2.5-VL-3B-Instruct",
+    "smolvlm": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+    "llama": "meta-llama/Llama-3.2-11B-Vision-Instruct",
 }
 
 

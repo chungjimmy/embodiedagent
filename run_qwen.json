@@ -1,0 +1,6 @@
+{
+  "run_configs": [
+    "experiment_config_final.json",
+    "three_task_config_final.json"
+  ]
+}

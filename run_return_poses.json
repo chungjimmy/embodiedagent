@@ -1,0 +1,6 @@
+{
+  "run_configs": [
+    "three_task_config_final_return_a.json",
+    "three_task_config_final_return_b.json"
+  ]
+}

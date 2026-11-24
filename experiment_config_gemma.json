@@ -1,0 +1,260 @@
+{
+  "study_design": {
+    "require_single_model": true,
+    "exclude_coela_baseline": true,
+    "require_explicit_scene_instances": true
+  },
+  "models": [
+    {
+      "name": "google/gemma-3-4b-it",
+      "use_4bit": true,
+      "max_new_tokens": 200,
+      "clear_cuda_cache_between_calls": true,
+      "generation_max_time_seconds": 120,
+      "four_bit_compute_dtype": "auto",
+      "log_cuda_memory": true,
+      "cuda_allocator_config": "expandable_segments:True"
+    }
+  ],
+  "perceptual_interfaces": [
+    "text_mediated"
+  ],
+  "memory_modes": [
+    "none",
+    "combined"
+  ],
+  "scene": {
+    "name": "archviz_house",
+    "avatar_id": "a",
+    "width": 1280,
+    "height": 720,
+    "initial_position": {
+      "x": -7.487768173217773,
+      "y": 1.6,
+      "z": -1.741929054260254
+    },
+    "initial_yaw": 0,
+    "navigation": {
+      "enabled": true,
+      "cell_size": 0.25,
+      "raycast_y": 1.6,
+      "clearance": 0.35,
+      "path_sample_spacing": 0.2
+    },
+    "camera": {
+      "initial_pitch_degrees": 10,
+      "pitch_step_degrees": 15,
+      "minimum_pitch_degrees": 10,
+      "maximum_pitch_degrees": 10,
+      "blank_frame_retry_count": 2,
+      "reject_blank_frames": true
+    },
+    "development_episodes": [
+      {
+        "id": "dev_heading_000",
+        "seed": 11,
+        "initial_yaw": 0
+      },
+      {
+        "id": "dev_heading_180",
+        "seed": 22,
+        "initial_yaw": 180
+      }
+    ],
+    "evaluation_episodes": [
+      {
+        "id": "eval_pos_a",
+        "seed": 101,
+        "initial_position": {
+          "x": -12.687515641523609,
+          "y": 1.6,
+          "z": -2.613249397819896
+        },
+        "initial_yaw": 90
+      },
+      {
+        "id": "eval_pos_b",
+        "seed": 102,
+        "initial_position": {
+          "x": -11.273302079150513,
+          "y": 1.6,
+          "z": -6.027462960192992
+        },
+        "initial_yaw": 180
+      },
+      {
+        "id": "eval_pos_c",
+        "seed": 103,
+        "initial_position": {
+          "x": -13.394622422710157,
+          "y": 1.6,
+          "z": -3.3203561790064433
+        },
+        "initial_yaw": 45
+      }
+    ],
+    "target_visibility_preflight": {
+      "enabled": true,
+      "minimum_distance": 1.5,
+      "maximum_distance": 4.0,
+      "preferred_distance": 2.5,
+      "minimum_visible_pixels": 512,
+      "minimum_bbox_width_pixels": 48,
+      "minimum_bbox_height_pixels": 48,
+      "edge_margin_pixels": 20,
+      "minimum_vertical_center_fraction": 0.15,
+      "maximum_vertical_center_fraction": 0.85,
+      "max_candidate_poses": 64
+    },
+    "task_objects": [
+      {
+        "object_id": 2001,
+        "label": "blue bag",
+        "visual_description": "teal-blue handbag with white handles",
+        "model_name": "blue_satchal",
+        "scale_factor": 1.0,
+        "radius": 0.45,
+        "pickupable": false,
+        "static": true,
+        "placement": {
+          "strategy": "nearest_reachable",
+          "anchor": {
+            "x": -15.738,
+            "z": -7.242
+          },
+          "minimum_path_distance": 0.0,
+          "minimum_initial_path_distance": 4.0,
+          "minimum_departure": 1.0,
+          "clearance": 0.9,
+          "minimum_view_poses": 4,
+          "view_minimum_distance": 1.5,
+          "view_maximum_distance": 4.0,
+          "view_preferred_distance": 2.5,
+          "y": 0.0,
+          "ground_to_floor": true,
+          "surface_y": 0.0,
+          "ground_clearance": 0.02
+        }
+      }
+    ]
+  },
+  "max_steps": 30,
+  "perception_max_new_tokens": 280,
+  "decision_max_new_tokens": 160,
+  "completion_max_new_tokens": 64,
+  "save_step_images": true,
+  "tasks": [
+    {
+      "id": "find_blue_bag",
+      "goal": "Find the blue bag. Stop only when the blue bag is directly visible and you are near it.",
+      "task_spec": {
+        "task_target": "bag",
+        "target_aliases": [
+          "handbag",
+          "purse",
+          "satchel",
+          "suitcase"
+        ],
+        "target_attributes": [
+          "blue"
+        ],
+        "excluded_target_terms": [
+          "brown",
+          "wooden",
+          "black"
+        ],
+        "completion_mode": "target_near",
+        "completion_condition": "The blue bag is directly visible in the current camera view and is near the agent.",
+        "requires_target_confirmation": true,
+        "collision_aware_action_filter": true,
+        "visible_target_approach": true,
+        "target_reacquisition_after_turn": true,
+        "target_loss_recovery": true,
+        "sighting_handling": true,
+        "completion_policy": "assisted",
+        "claim_on_evidence_text": true,
+        "memory_guided_search_hold_actions": 2,
+        "memory_guided_destination": "landmark_first",
+        "target_approach_persistence_steps": 1,
+        "completion_consistency": {
+          "retry_on_inconsistency": true,
+          "promote_validated_perception": false,
+          "require_environment_success_for_completion": true
+        },
+        "allowed_actions": [
+          "move_forward",
+          "move_backward",
+          "turn_left",
+          "turn_right"
+        ],
+        "simplified_rules": true,
+        "controller_priority": "target_first",
+        "initial_scan": true
+      },
+      "success_criteria": {
+        "type": "all",
+        "criteria": [
+          {
+            "type": "object_proximity",
+            "target_object_id": 2001,
+            "max_distance": 2.0
+          },
+          {
+            "type": "object_visibility",
+            "target_object_id": 2001,
+            "minimum_visible_pixels": 128
+          }
+        ]
+      }
+    }
+  ],
+  "task_ids": [
+    "find_blue_bag"
+  ],
+  "interactive": {
+    "perceptual_interface": "text_mediated",
+    "memory_mode": "semantic"
+  },
+  "run_split": "evaluation",
+  "episodic_window": 8,
+  "memory_context": {
+    "episodic_events": 3,
+    "semantic_objects": 6,
+    "visited_poses": 4,
+    "semantic_facts": 6,
+    "text_characters": 240,
+    "prompt_characters": 1800
+  },
+  "randomize_condition_order": true,
+  "condition_order_seed": 2026,
+  "relaunch_delay_seconds": 1,
+  "episode_timeout_seconds": 1500,
+  "watchdog_termination_grace_seconds": 15,
+  "output_directory": "experiment_results_gemma",
+  "coela_baseline": {
+    "enabled": false,
+    "description": "Single-agent CoELA-style modular baseline; multi-agent communication is outside this study."
+  },
+  "extensions": {
+    "sequential_tasks": {
+      "enabled": false,
+      "perceptual_interface": "direct_visual",
+      "memory_mode": "combined"
+    },
+    "object_interaction": {
+      "enabled": false,
+      "example_tasks": [
+        "Pick up the apple.",
+        "Move the apple to the table and put it down."
+      ]
+    },
+    "learned_memory": {
+      "enabled": false,
+      "frozen": true,
+      "directory": "learned_memory",
+      "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+      "development_seeds_only": true
+    }
+  },
+  "perception_retry_max_new_tokens": 160
+}
